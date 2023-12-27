@@ -7,11 +7,8 @@ The Australian National University
 Australian Centre for Robotic Vision
 """
 
-import torch
-import torchvision.ops.boxes as box_ops
 
 from torch import nn, Tensor
-from torchvision.ops._utils import _cat
 from typing import Optional, List, Tuple
 from torchvision.ops import MultiScaleRoIAlign
 from torchvision.models.detection import transform
@@ -20,6 +17,7 @@ import pocket.models as models
 
 from transforms import HOINetworkTransform
 from interaction_head import InteractionHead, GraphHead
+
 
 class GenericHOINetwork(nn.Module):
     """A generic architecture for HOI classification
@@ -32,9 +30,13 @@ class GenericHOINetwork(nn.Module):
         postprocess: bool
             If True, rescale bounding boxes to original image size
     """
-    def __init__(self,
-        backbone: nn.Module, interaction_head: nn.Module,
-        transform: nn.Module, postprocess: bool = True
+
+    def __init__(
+        self,
+        backbone: nn.Module,
+        interaction_head: nn.Module,
+        transform: nn.Module,
+        postprocess: bool = True,
     ) -> None:
         super().__init__()
         self.backbone = backbone
@@ -43,30 +45,29 @@ class GenericHOINetwork(nn.Module):
 
         self.postprocess = postprocess
 
-    def preprocess(self,
+    def preprocess(
+        self,
         images: List[Tensor],
         detections: List[dict],
-        targets: Optional[List[dict]] = None
-    ) -> Tuple[
-        List[Tensor], List[dict],
-        List[dict], List[Tuple[int, int]]
-    ]:
+        targets: Optional[List[dict]] = None,
+    ) -> Tuple[List[Tensor], List[dict], List[dict], List[Tuple[int, int]]]:
         original_image_sizes = [img.shape[-2:] for img in images]
         images, targets = self.transform(images, targets)
 
         for det, o_im_s, im_s in zip(
             detections, original_image_sizes, images.image_sizes
         ):
-            boxes = det['boxes']
+            boxes = det["boxes"]
             boxes = transform.resize_boxes(boxes, o_im_s, im_s)
-            det['boxes'] = boxes
+            det["boxes"] = boxes
 
         return images, detections, targets, original_image_sizes
 
-    def forward(self,
+    def forward(
+        self,
         images: List[Tensor],
         detections: List[dict],
-        targets: Optional[List[dict]] = None
+        targets: Optional[List[dict]] = None,
     ) -> List[dict]:
         """
         Parameters:
@@ -83,23 +84,25 @@ class GenericHOINetwork(nn.Module):
             raise ValueError("In training mode, targets should be passed")
 
         images, detections, targets, original_image_sizes = self.preprocess(
-                images, detections, targets)
+            images, detections, targets
+        )
 
         features = self.backbone(images.tensors)
-        results = self.interaction_head(features, detections, 
-            images.image_sizes, targets)
+        results = self.interaction_head(
+            features, detections, images.image_sizes, targets
+        )
 
         if self.postprocess and results is not None:
             return self.transform.postprocess(
-                results,
-                images.image_sizes,
-                original_image_sizes
+                results, images.image_sizes, original_image_sizes
             )
         else:
             return results
 
+
 class SpatiallyConditionedGraph(GenericHOINetwork):
-    def __init__(self,
+    def __init__(
+        self,
         object_to_action: List[list],
         human_idx: int,
         # Backbone parameters
@@ -117,24 +120,23 @@ class SpatiallyConditionedGraph(GenericHOINetwork):
         num_iterations: int = 2,
         distributed: bool = False,
         # Transformation parameters
-        min_size: int = 800, max_size: int = 1333,
+        min_size: int = 800,
+        max_size: int = 1333,
         image_mean: Optional[List[float]] = None,
         image_std: Optional[List[float]] = None,
         postprocess: bool = True,
         # Preprocessing parameters
         box_nms_thresh: float = 0.5,
         max_human: int = 15,
-        max_object: int = 15
+        max_object: int = 15,
     ) -> None:
-
-        detector = models.fasterrcnn_resnet_fpn(backbone_name,
-            pretrained=pretrained)
+        detector = models.fasterrcnn_resnet_fpn(backbone_name, pretrained=pretrained)
         backbone = detector.backbone
 
         box_roi_pool = MultiScaleRoIAlign(
-            featmap_names=['0', '1', '2', '3'],
+            featmap_names=["0", "1", "2", "3"],
             output_size=output_size,
-            sampling_ratio=sampling_ratio
+            sampling_ratio=sampling_ratio,
         )
 
         box_pair_head = GraphHead(
@@ -146,7 +148,7 @@ class SpatiallyConditionedGraph(GenericHOINetwork):
             human_idx=human_idx,
             object_class_to_target_class=object_to_action,
             fg_iou_thresh=fg_iou_thresh,
-            num_iter=num_iterations
+            num_iter=num_iterations,
         )
 
         box_pair_predictor = nn.Linear(representation_size * 2, num_classes)
@@ -163,14 +165,13 @@ class SpatiallyConditionedGraph(GenericHOINetwork):
             box_score_thresh=box_score_thresh,
             max_human=max_human,
             max_object=max_object,
-            distributed=distributed
+            distributed=distributed,
         )
 
         if image_mean is None:
             image_mean = [0.485, 0.456, 0.406]
         if image_std is None:
             image_std = [0.229, 0.224, 0.225]
-        transform = HOINetworkTransform(min_size, max_size,
-            image_mean, image_std)
+        transform = HOINetworkTransform(min_size, max_size, image_mean, image_std)
 
         super().__init__(backbone, interaction_head, transform, postprocess)
