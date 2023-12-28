@@ -17,6 +17,7 @@ from torch.utils.data import DataLoader, DistributedSampler
 
 from models import SpatiallyConditionedGraph as SCG
 from utils import custom_collate, CustomisedDLE, DataFactory
+from h2o.dataset import H2ODataset
 
 
 def main(rank, args):
@@ -71,6 +72,13 @@ def main(rank, args):
         object_to_target = train_loader.dataset.dataset.object_to_action
         human_idx = 1
         num_classes = 24
+    elif args.dataset == "h2o":
+        dataset = train_loader.dataset.dataset
+        assert isinstance(dataset, H2ODataset)
+        object_to_target = dataset.get_object_valid_interactions(["train", "test"])
+        human_idx = dataset.human_class_id
+        num_classes = dataset.num_interaction_classes
+
     net = SCG(
         object_to_target,
         human_idx,

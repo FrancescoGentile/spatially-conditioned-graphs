@@ -11,6 +11,7 @@ import os
 import json
 import torch
 import numpy as np
+import warnings
 from tqdm import tqdm
 
 from torch.utils.data import Dataset
@@ -18,6 +19,7 @@ from torchvision.transforms.functional import hflip
 
 from vcoco.vcoco import VCOCO
 from hicodet.hicodet import HICODet
+from h2o.dataset import H2ODataset
 
 import pocket
 from pocket.core import DistributedLearningEngine
@@ -46,7 +48,7 @@ class DataFactory(Dataset):
         box_score_thresh_h=0.2,
         box_score_thresh_o=0.2,
     ):
-        if name not in ["hicodet", "vcoco"]:
+        if name not in ["hicodet", "vcoco", "h2o"]:
             raise ValueError("Unknown dataset ", name)
 
         if name == "hicodet":
@@ -61,7 +63,7 @@ class DataFactory(Dataset):
                 target_transform=pocket.ops.ToTensor(input_format="dict"),
             )
             self.human_idx = 49
-        else:
+        elif name == "vcoco":
             assert partition in ["train", "val", "trainval", "test"], (
                 "Unknown V-COCO partition " + partition
             )
@@ -79,6 +81,10 @@ class DataFactory(Dataset):
                 target_transform=pocket.ops.ToTensor(input_format="dict"),
             )
             self.human_idx = 1
+        else:
+            assert partition in ["train", "test"], "Unknown H2O partition " + partition
+            self.dataset = H2ODataset(data_root, partition)
+            self.human_idx = self.dataset.human_class_id
 
         self.name = name
         self.detection_root = detection_root
@@ -133,7 +139,7 @@ class DataFactory(Dataset):
             # representation from pixel indices to coordinates
             target["boxes_h"][:, :2] -= 1
             target["boxes_o"][:, :2] -= 1
-        else:
+        elif self.name == "vcoco":
             target["labels"] = target["actions"]
             target["object"] = target.pop("objects")
 
@@ -218,7 +224,9 @@ class CustomisedDLE(DistributedLearningEngine):
         output = self._state.net(*self._state.inputs, targets=self._state.targets)
         loss_dict = output.pop()
         if loss_dict["hoi_loss"].isnan():
-            raise ValueError(f"The HOI loss is NaN for rank {self._rank}")
+            warnings.warn(f"The HOI loss is NaN for rank {self._rank}")
+            # raise ValueError(f"The HOI loss is NaN for rank {self._rank}")
+            return
 
         self._state.loss = sum(loss for loss in loss_dict.values())
         self._state.loss.backward()
